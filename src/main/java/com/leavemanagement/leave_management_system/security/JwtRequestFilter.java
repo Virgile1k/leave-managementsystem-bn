@@ -1,6 +1,7 @@
-package com.leavemanagement.leave_management_system.util;
+package com.leavemanagement.leave_management_system.security;
+
+import com.leavemanagement.leave_management_system.util.JwtTokenUtil;
 import io.jsonwebtoken.ExpiredJwtException;
-import io.jsonwebtoken.MalformedJwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -44,11 +45,14 @@ public class JwtRequestFilter extends OncePerRequestFilter {
                 logger.error("Unable to get JWT Token");
             } catch (ExpiredJwtException e) {
                 logger.error("JWT Token has expired");
-            } catch (MalformedJwtException e) {
-                logger.error("Invalid JWT Token");
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                response.getWriter().write("{\"error\":\"Token expired\"}");
+                return;
+            } catch (Exception e) {
+                logger.error("JWT Token validation error", e);
             }
         } else {
-            logger.warn("JWT Token does not begin with Bearer String");
+            logger.debug("JWT Token does not begin with Bearer String");
         }
 
         // Once we get the token validate it.
@@ -56,16 +60,17 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
             UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
 
-            // If token is valid configure Spring Security to manually set authentication
+            // if token is valid configure Spring Security to manually set authentication
             if (jwtTokenUtil.validateToken(jwtToken, userDetails)) {
-
                 UsernamePasswordAuthenticationToken usernamePasswordAuthenticationToken = new UsernamePasswordAuthenticationToken(
                         userDetails, null, userDetails.getAuthorities());
+
                 usernamePasswordAuthenticationToken
                         .setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
                 // After setting the Authentication in the context, we specify
-                // that the current user is authenticated
+                // that the current user is authenticated. So it passes the
+                // Spring Security Configurations successfully.
                 SecurityContextHolder.getContext().setAuthentication(usernamePasswordAuthenticationToken);
             }
         }
