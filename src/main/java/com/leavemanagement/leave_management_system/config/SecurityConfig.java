@@ -60,6 +60,9 @@ public class SecurityConfig {
                         // Public auth endpoints with more specific patterns
                         .requestMatchers("/api/v1/auth/**").permitAll()
 
+                        // Add this line to permit the callback URL
+                        .requestMatchers("/auth/callback").permitAll()
+
                         // Swagger UI and OpenAPI endpoints
                         .requestMatchers("/swagger-ui.html", "/swagger-ui/**").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/v3/api-docs.yaml").permitAll()

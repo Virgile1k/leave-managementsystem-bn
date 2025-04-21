@@ -9,4 +9,5 @@ public interface AuthService {
     AuthResponse authenticateWithMicrosoft(MicrosoftAuthRequest authRequest);
     AuthResponse refreshToken(String refreshToken);
     AuthResponse getCurrentUser();
+
 }

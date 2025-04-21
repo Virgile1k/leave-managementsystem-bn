@@ -1,12 +1,8 @@
 package com.leavemanagement.leave_management_system.model;
 
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.GenericGenerator;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
@@ -21,32 +17,34 @@ import java.util.UUID;
 public class Document {
 
     @Id
-    @GeneratedValue(generator = "UUID")
-    @GenericGenerator(name = "UUID", strategy = "org.hibernate.id.UUIDGenerator")
-    @Column(name = "id", updatable = false, nullable = false)
+    @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "request_id", nullable = false)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "leave_request_id")
     private LeaveRequest leaveRequest;
 
-    @Column(name = "filename", nullable = false)
+    @Column(nullable = false)
     private String filename;
 
-    @Column(name = "file_url", nullable = false)
+    @Column(nullable = false)
     private String fileUrl;
 
-    @Column(name = "file_type", nullable = false)
+    @Column(nullable = false)
     private String fileType;
 
-    @Column(name = "upload_date", nullable = false)
-    private LocalDateTime uploadDate;
+    @Column(nullable = false)
+    private String s3Key;  // The key used in S3 bucket
 
     @CreationTimestamp
-    @Column(name = "created_at", nullable = false, updatable = false)
+    @Column(name = "created_at")
     private LocalDateTime createdAt;
 
     @UpdateTimestamp
-    @Column(name = "updated_at", nullable = false)
+    @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 }

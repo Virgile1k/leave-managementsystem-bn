@@ -3,10 +3,7 @@ import java.time.LocalDateTime;
 import java.util.Set;
 import java.util.UUID;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import org.hibernate.annotations.GenericGenerator;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
@@ -14,7 +11,10 @@ import com.leavemanagement.leave_management_system.enums.UserRole;
 
 @Entity
 @Table(name = "users")
-@Data
+@Getter
+@Setter
+@ToString(exclude = {"department", "manager", "subordinates", "leaveRequests", "leaveBalances", "notifications"})
+@EqualsAndHashCode(exclude = {"department", "manager", "subordinates", "leaveRequests", "leaveBalances", "notifications"})
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor

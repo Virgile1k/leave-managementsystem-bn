@@ -22,6 +22,8 @@ public class GlobalExceptionHandler {
         return createErrorResponse(ex.getMessage(), HttpStatus.UNAUTHORIZED, request);
     }
 
+
+
     @ExceptionHandler(TokenException.class)
     public ResponseEntity<Map<String, Object>> handleTokenException(
             TokenException ex, WebRequest request) {

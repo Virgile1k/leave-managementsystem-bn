@@ -1,10 +1,7 @@
 package com.leavemanagement.leave_management_system.model;
 
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.GenericGenerator;
 import org.hibernate.annotations.UpdateTimestamp;
@@ -15,7 +12,10 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "departments")
-@Data
+@Getter
+@Setter
+@ToString(exclude = {"head", "users"})
+@EqualsAndHashCode(exclude = {"head", "users"})
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor

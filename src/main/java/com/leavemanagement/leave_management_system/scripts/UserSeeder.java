@@ -45,6 +45,18 @@ public class UserSeeder {
                 userRepository.save(admin);
                 System.out.println("Admin user created");
 
+                // Create additional admin user
+                User virgileAdmin = User.builder()
+                        .email("ndayambajevg16bussiness@gmail.com")
+                        .fullName("Virgile Ndayambaje")
+                        .password(passwordEncoder.encode("password123"))
+                        .role(UserRole.ADMIN)
+                        .profilePicUrl("https://randomuser.me/api/portraits/men/2.jpg")
+                        .build();
+
+                userRepository.save(virgileAdmin);
+                System.out.println("Additional admin user created");
+
                 // Create managers first
                 User hrManager = createUser("hr.manager@company.com", "HR Manager", "password123", UserRole.MANAGER, null, hrDept);
                 User techManager = createUser("tech.manager@company.com", "Tech Manager", "password123", UserRole.MANAGER, null, techDept);

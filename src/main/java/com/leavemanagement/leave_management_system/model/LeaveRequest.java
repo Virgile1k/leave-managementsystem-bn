@@ -39,6 +39,9 @@ public class LeaveRequest {
     @JoinColumn(name = "leave_type_id", nullable = false)
     private LeaveType leaveType;
 
+    @Column(name = "leave_duration")
+    private BigDecimal leaveDuration;
+
     @Column(name = "start_date", nullable = false)
     private LocalDate startDate;
 
