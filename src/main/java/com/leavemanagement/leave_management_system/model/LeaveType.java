@@ -35,7 +35,7 @@ public class LeaveType {
     @Column(name = "description")
     private String description;
 
-    @Column(name = "accrual_rate", nullable = false, precision = 5, scale = 2)
+    @Column(name = "accrual_rate", nullable = true, precision = 5, scale = 2)
     private BigDecimal accrualRate;
 
     @Column(name = "requires_doc", nullable = false)

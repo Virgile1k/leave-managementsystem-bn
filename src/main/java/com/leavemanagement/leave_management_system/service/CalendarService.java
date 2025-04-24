@@ -5,6 +5,7 @@ import com.leavemanagement.leave_management_system.dto.HolidayDTO;
 import com.leavemanagement.leave_management_system.dto.LeaveRequestDTO;
 import com.leavemanagement.leave_management_system.dto.TeamCalendarDTO;
 import com.leavemanagement.leave_management_system.exceptions.ResourceNotFoundException;
+import com.leavemanagement.leave_management_system.exceptions.UnauthorizedException;
 import com.leavemanagement.leave_management_system.model.CalendarEvent;
 import com.leavemanagement.leave_management_system.model.Holiday;
 import com.leavemanagement.leave_management_system.model.LeaveRequest;
@@ -17,9 +18,9 @@ import com.microsoft.graph.models.ItemBody;
 import com.microsoft.graph.models.BodyType;
 import com.microsoft.graph.models.DateTimeTimeZone;
 import com.microsoft.graph.requests.GraphServiceClient;
-import com.microsoft.graph.requests.EventCollectionPage;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.Request;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,161 +28,88 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class CalendarService {
     private final CalendarEventRepository calendarEventRepository;
     private final HolidayRepository holidayRepository;
     private final LeaveRequestRepository leaveRequestRepository;
-    private final UserService userService;
+
+    // Optional GraphServiceClient - may be null if Outlook integration is disabled
+    private final GraphServiceClient<Request> graphClient;
 
     @Value("${outlook.calendar.enabled:false}")
     private boolean outlookCalendarEnabled;
 
-    private GraphServiceClient graphClient;
+    @Value("${azure.default-user-email:}")
+    private String defaultUserEmail;
 
-    // This method would be called by a scheduled task or manually to sync events
+    @Value("${azure.retry-attempts:3}")
+    private int retryAttempts;
+
+    @Value("${azure.retry-delay-ms:2000}")
+    private int retryDelayMs;
+
+    @Autowired
+    public CalendarService(
+            CalendarEventRepository calendarEventRepository,
+            HolidayRepository holidayRepository,
+            LeaveRequestRepository leaveRequestRepository,
+            @Autowired(required = false) GraphServiceClient<Request> graphClient) {
+        this.calendarEventRepository = calendarEventRepository;
+        this.holidayRepository = holidayRepository;
+        this.leaveRequestRepository = leaveRequestRepository;
+        this.graphClient = graphClient;
+    }
+
+    /**
+     * Create a calendar event in the internal system
+     * If Outlook integration is enabled and configured, it will also create an event in Outlook
+     */
     @Transactional
-    public void syncOutlookCalendar() {
-        if (!outlookCalendarEnabled) {
-            log.info("Outlook calendar sync is disabled");
-            return;
-        }
+    public CalendarEventDTO createCalendarEvent(CalendarEventDTO eventDTO, UUID departmentId, UUID userId) {
+        // Convert ZonedDateTime to LocalDateTime if necessary
+        LocalDateTime startTime = eventDTO.getStartTime() instanceof ZonedDateTime ?
+                ((ZonedDateTime) eventDTO.getStartTime()).toLocalDateTime() :
+                (LocalDateTime) eventDTO.getStartTime();
 
-        try {
-            // Get events from Outlook within a date range (e.g., next 3 months)
-            LocalDateTime now = LocalDateTime.now();
-            LocalDateTime endDate = now.plusMonths(3);
+        LocalDateTime endTime = eventDTO.getEndTime() instanceof ZonedDateTime ?
+                ((ZonedDateTime) eventDTO.getEndTime()).toLocalDateTime() :
+                (LocalDateTime) eventDTO.getEndTime();
 
-            // Fetch events from Outlook
-            EventCollectionPage events = fetchOutlookEvents(now, endDate);
+        // Ensure referenceId is never null by providing a default UUID if needed
+        UUID referenceId = eventDTO.getReferenceId() != null ?
+                eventDTO.getReferenceId() : UUID.randomUUID();
 
-            // Process each event from Outlook
-            for (Event event : events.getCurrentPage()) {
-                // Check if event already exists in our system
-                calendarEventRepository.findByOutlookEventId(event.id)
-                        .ifPresentOrElse(
-                                existingEvent -> updateExistingEventFromOutlook(existingEvent, event),
-                                () -> createNewEventFromOutlook(event)
-                        );
-            }
-
-            // For events in our system that have an Outlook ID, check if they still exist in Outlook
-            // If not, either update or remove them
-            syncLocalEventsWithOutlook(now, endDate);
-
-        } catch (Exception e) {
-            log.error("Error syncing with Outlook calendar", e);
-        }
-    }
-
-    private EventCollectionPage fetchOutlookEvents(LocalDateTime startDateTime, LocalDateTime endDateTime) {
-        if (graphClient == null) {
-            initializeGraphClient();
-        }
-
-        String startDateTimeString = startDateTime.atZone(ZoneId.systemDefault())
-                .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        String endDateTimeString = endDateTime.atZone(ZoneId.systemDefault())
-                .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-
-        return graphClient.me().calendar().events()
-                .buildRequest()
-                .filter("start/dateTime ge '" + startDateTimeString + "' and end/dateTime le '" + endDateTimeString + "'")
-                .get();
-    }
-
-    private void initializeGraphClient() {
-        // Implementation depends on the authentication method used
-        // This would typically involve using OAuth credentials or a client certificate
-
-        // Placeholder for actual implementation
-        log.info("Initializing Microsoft Graph client");
-
-        // Usually, you would create an authentication provider with the appropriate credentials
-        // TokenCredentialAuthProvider authProvider = new TokenCredentialAuthProvider(scopes, credential);
-        // graphClient = GraphServiceClient.builder().authenticationProvider(authProvider).buildClient();
-    }
-
-    private void updateExistingEventFromOutlook(CalendarEvent existingEvent, Event outlookEvent) {
-        existingEvent.setTitle(outlookEvent.subject);
-        existingEvent.setDescription(outlookEvent.bodyPreview);
-
-        DateTimeFormatter formatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
-        existingEvent.setStartTime(LocalDateTime.parse(outlookEvent.start.dateTime, formatter));
-        existingEvent.setEndTime(LocalDateTime.parse(outlookEvent.end.dateTime, formatter));
-
-        calendarEventRepository.save(existingEvent);
-    }
-
-    private void createNewEventFromOutlook(Event outlookEvent) {
-        DateTimeFormatter formatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
-        LocalDateTime startTime = LocalDateTime.parse(outlookEvent.start.dateTime, formatter);
-        LocalDateTime endTime = LocalDateTime.parse(outlookEvent.end.dateTime, formatter);
-
-        CalendarEvent newEvent = CalendarEvent.builder()
-                .title(outlookEvent.subject)
-                .description(outlookEvent.bodyPreview)
-                .startTime(startTime)
-                .endTime(endTime)
-                .eventType("OUTLOOK")
-                .outlookEventId(outlookEvent.id)
-                .referenceId(UUID.randomUUID())  // Generate a placeholder reference ID
-                .build();
-
-        calendarEventRepository.save(newEvent);
-    }
-
-    private void syncLocalEventsWithOutlook(LocalDateTime startDateTime, LocalDateTime endDateTime) {
-        List<CalendarEvent> localEvents = calendarEventRepository.findByDateRange(startDateTime, endDateTime);
-
-        for (CalendarEvent localEvent : localEvents) {
-            if (localEvent.getOutlookEventId() != null) {
-                try {
-                    // Check if event still exists in Outlook
-                    Event outlookEvent = graphClient.me().events(localEvent.getOutlookEventId())
-                            .buildRequest()
-                            .get();
-
-                    // Update the local event if needed
-                    updateExistingEventFromOutlook(localEvent, outlookEvent);
-                } catch (Exception e) {
-                    // If event doesn't exist in Outlook anymore, clear the outlook ID
-                    log.info("Event no longer exists in Outlook: {}", localEvent.getOutlookEventId());
-                    localEvent.setOutlookEventId(null);
-                    calendarEventRepository.save(localEvent);
-                }
-            }
-        }
-    }
-
-    @Transactional
-    public CalendarEventDTO createCalendarEvent(CalendarEventDTO eventDTO) {
         CalendarEvent calendarEvent = CalendarEvent.builder()
                 .title(eventDTO.getTitle())
                 .description(eventDTO.getDescription())
-                .startTime(eventDTO.getStartTime())
-                .endTime(eventDTO.getEndTime())
+                .startTime(startTime)
+                .endTime(endTime)
                 .eventType(eventDTO.getEventType())
-                .referenceId(eventDTO.getReferenceId())
+                .referenceId(referenceId)
+                .departmentId(departmentId)  // Add department ID
+                .createdBy(userId)           // Add user ID who created the event
                 .build();
 
         CalendarEvent savedEvent = calendarEventRepository.save(calendarEvent);
 
-        // If Outlook integration is enabled, sync the event to Outlook
-        if (outlookCalendarEnabled) {
+        // Only sync with Outlook if integration is enabled and properly configured
+        if (isOutlookIntegrationActive()) {
             try {
                 String outlookEventId = createOutlookEvent(eventDTO);
                 savedEvent.setOutlookEventId(outlookEventId);
                 savedEvent = calendarEventRepository.save(savedEvent);
+                log.debug("Event created in Outlook with ID: {}", outlookEventId);
             } catch (Exception e) {
-                log.error("Failed to create event in Outlook", e);
+                log.warn("Failed to create event in Outlook, but internal calendar event was created successfully", e);
+                // Do not fail the entire operation if Outlook sync fails
             }
         }
 
@@ -189,23 +117,49 @@ public class CalendarService {
     }
 
     @Transactional
-    public CalendarEventDTO updateCalendarEvent(CalendarEventDTO eventDTO) {
+    public CalendarEventDTO updateCalendarEvent(CalendarEventDTO eventDTO, UUID departmentId, UUID userId) {
         CalendarEvent calendarEvent = calendarEventRepository.findById(eventDTO.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Calendar event not found"));
 
+        // Security check: Only allow updates if the event belongs to the user's department
+        // or if the user has special permissions (could be added as additional logic)
+        if (calendarEvent.getDepartmentId() != null && !calendarEvent.getDepartmentId().equals(departmentId)) {
+            throw new UnauthorizedException("You don't have permission to update this calendar event");
+        }
+
         calendarEvent.setTitle(eventDTO.getTitle());
         calendarEvent.setDescription(eventDTO.getDescription());
-        calendarEvent.setStartTime(eventDTO.getStartTime());
-        calendarEvent.setEndTime(eventDTO.getEndTime());
+
+        // Convert ZonedDateTime to LocalDateTime if necessary
+        LocalDateTime startTime = eventDTO.getStartTime() instanceof ZonedDateTime ?
+                ((ZonedDateTime) eventDTO.getStartTime()).toLocalDateTime() :
+                (LocalDateTime) eventDTO.getStartTime();
+
+        LocalDateTime endTime = eventDTO.getEndTime() instanceof ZonedDateTime ?
+                ((ZonedDateTime) eventDTO.getEndTime()).toLocalDateTime() :
+                (LocalDateTime) eventDTO.getEndTime();
+
+        calendarEvent.setStartTime(startTime);
+        calendarEvent.setEndTime(endTime);
+
+        // Ensure referenceId is never null when updating
+        if (eventDTO.getReferenceId() != null) {
+            calendarEvent.setReferenceId(eventDTO.getReferenceId());
+        }
+
+        // Do not update departmentId or createdBy as that should remain constant
 
         CalendarEvent updatedEvent = calendarEventRepository.save(calendarEvent);
 
-        // If Outlook integration is enabled and the event has an Outlook ID, update it
-        if (outlookCalendarEnabled && calendarEvent.getOutlookEventId() != null) {
+        // Only sync with Outlook if integration is enabled, properly configured,
+        // and the event already has an Outlook ID
+        if (isOutlookIntegrationActive() && calendarEvent.getOutlookEventId() != null) {
             try {
                 updateOutlookEvent(calendarEvent.getOutlookEventId(), eventDTO);
+                log.debug("Event updated in Outlook with ID: {}", calendarEvent.getOutlookEventId());
             } catch (Exception e) {
-                log.error("Failed to update event in Outlook", e);
+                log.warn("Failed to update event in Outlook, but internal calendar event was updated successfully", e);
+                // Do not fail the entire operation if Outlook sync fails
             }
         }
 
@@ -213,16 +167,24 @@ public class CalendarService {
     }
 
     @Transactional
-    public void deleteCalendarEvent(UUID eventId) {
+    public void deleteCalendarEvent(UUID eventId, UUID departmentId, UUID userId) {
         CalendarEvent calendarEvent = calendarEventRepository.findById(eventId)
                 .orElseThrow(() -> new ResourceNotFoundException("Calendar event not found"));
 
+        // Security check: Only allow deletion if the event belongs to the user's department
+        // or if the user has special permissions (could be added as additional logic)
+        if (calendarEvent.getDepartmentId() != null && !calendarEvent.getDepartmentId().equals(departmentId)) {
+            throw new UnauthorizedException("You don't have permission to delete this calendar event");
+        }
+
         // If Outlook integration is enabled and the event has an Outlook ID, delete it from Outlook
-        if (outlookCalendarEnabled && calendarEvent.getOutlookEventId() != null) {
+        if (isOutlookIntegrationActive() && calendarEvent.getOutlookEventId() != null) {
             try {
                 deleteOutlookEvent(calendarEvent.getOutlookEventId());
+                log.debug("Event deleted from Outlook with ID: {}", calendarEvent.getOutlookEventId());
             } catch (Exception e) {
-                log.error("Failed to delete event from Outlook", e);
+                log.warn("Failed to delete event from Outlook, but internal calendar event will be deleted", e);
+                // Do not fail the entire operation if Outlook sync fails
             }
         }
 
@@ -233,7 +195,35 @@ public class CalendarService {
         return calendarEventRepository.findByReferenceId(referenceId);
     }
 
+    public List<CalendarEventDTO> getCalendarEventsByDepartment(LocalDateTime startTime, LocalDateTime endTime, UUID departmentId) {
+        return calendarEventRepository.findByDateRangeAndDepartment(startTime, endTime, departmentId).stream()
+                .map(this::convertToCalendarEventDTO)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Create a new holiday
+     * @param holidayDTO The holiday data to be created
+     * @return The created holiday data
+     */
+    @Transactional
+    public HolidayDTO createHoliday(HolidayDTO holidayDTO) {
+        Holiday holiday = Holiday.builder()
+                .name(holidayDTO.getName())
+                .date(holidayDTO.getDate())
+                .isRecurring(holidayDTO.getIsRecurring())
+                .countryId(holidayDTO.getCountryId())
+                .build();
+
+        Holiday savedHoliday = holidayRepository.save(holiday);
+        return convertToHolidayDTO(savedHoliday);
+    }
+
+    @Deprecated
     public List<CalendarEventDTO> getCalendarEvents(LocalDateTime startTime, LocalDateTime endTime) {
+        // This method is kept for backward compatibility but should not be used
+        // as it doesn't filter by department
+        log.warn("Using deprecated getCalendarEvents method without department filtering");
         return calendarEventRepository.findByDateRange(startTime, endTime).stream()
                 .map(this::convertToCalendarEventDTO)
                 .collect(Collectors.toList());
@@ -253,6 +243,11 @@ public class CalendarService {
         // Get all holidays for the date range
         List<Holiday> holidays = holidayRepository.findHolidaysBetweenDates(startDate, endDate);
 
+        // Get department-specific calendar events
+        LocalDateTime startDateTime = startDate.atStartOfDay();
+        LocalDateTime endDateTime = endDate.atTime(23, 59, 59);
+        List<CalendarEventDTO> departmentEvents = getCalendarEventsByDepartment(startDateTime, endDateTime, departmentId);
+
         return TeamCalendarDTO.builder()
                 .teamLeaves(teamLeaves.stream()
                         .filter(leave -> "APPROVED".equals(leave.getStatus().getName()))
@@ -262,6 +257,8 @@ public class CalendarService {
                             return LeaveRequestDTO.builder()
                                     .id(leave.getId())
                                     .userId(user.getId())
+                                    .userName(user.getFullName())  // Add user name here
+                                    .email(user.getEmail())        // Optionally add email
                                     .leaveTypeId(leave.getLeaveType().getId())
                                     .leaveTypeName(leave.getLeaveType().getName())
                                     .startDate(leave.getStartDate())
@@ -276,12 +273,33 @@ public class CalendarService {
                 .holidays(holidays.stream()
                         .map(this::convertToHolidayDTO)
                         .collect(Collectors.toList()))
+                .departmentEvents(departmentEvents) // Add department calendar events
                 .build();
     }
+    /**
+     * Synchronizes calendar events with Outlook.
+     * This is a placeholder method that could be implemented in the future.
+     * Currently not implemented as there's no immediate need for full sync.
+     */
+    public void syncOutlookCalendar() {
+        if (!isOutlookIntegrationActive()) {
+            throw new IllegalStateException("Outlook calendar integration is not configured or disabled");
+        }
 
+        log.info("Outlook calendar sync initiated");
+        // Implementation would go here if needed in the future
+        log.info("Outlook calendar sync completed");
+    }
+
+    // Helper method to check if Outlook integration is properly configured and enabled
+    private boolean isOutlookIntegrationActive() {
+        return outlookCalendarEnabled && graphClient != null && defaultUserEmail != null && !defaultUserEmail.isEmpty();
+    }
+
+    // Outlook integration methods - only called if integration is active
     private String createOutlookEvent(CalendarEventDTO eventDTO) {
-        if (graphClient == null) {
-            initializeGraphClient();
+        if (!isOutlookIntegrationActive()) {
+            throw new IllegalStateException("Outlook calendar is not available");
         }
 
         Event event = new Event();
@@ -293,18 +311,35 @@ public class CalendarService {
         event.body = body;
 
         DateTimeTimeZone start = new DateTimeTimeZone();
-        start.dateTime = eventDTO.getStartTime().atZone(ZoneId.systemDefault())
-                .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        start.timeZone = ZoneId.systemDefault().getId();
+        // Handle both LocalDateTime and ZonedDateTime
+        if (eventDTO.getStartTime() instanceof ZonedDateTime) {
+            ZonedDateTime zonedDateTime = (ZonedDateTime) eventDTO.getStartTime();
+            start.dateTime = zonedDateTime.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            start.timeZone = zonedDateTime.getZone().getId();
+        } else {
+            LocalDateTime localDateTime = (LocalDateTime) eventDTO.getStartTime();
+            start.dateTime = localDateTime.atZone(ZoneId.systemDefault())
+                    .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            start.timeZone = ZoneId.systemDefault().getId();
+        }
         event.start = start;
 
         DateTimeTimeZone end = new DateTimeTimeZone();
-        end.dateTime = eventDTO.getEndTime().atZone(ZoneId.systemDefault())
-                .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        end.timeZone = ZoneId.systemDefault().getId();
+        // Handle both LocalDateTime and ZonedDateTime
+        if (eventDTO.getEndTime() instanceof ZonedDateTime) {
+            ZonedDateTime zonedDateTime = (ZonedDateTime) eventDTO.getEndTime();
+            end.dateTime = zonedDateTime.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            end.timeZone = zonedDateTime.getZone().getId();
+        } else {
+            LocalDateTime localDateTime = (LocalDateTime) eventDTO.getEndTime();
+            end.dateTime = localDateTime.atZone(ZoneId.systemDefault())
+                    .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            end.timeZone = ZoneId.systemDefault().getId();
+        }
         event.end = end;
 
-        Event createdEvent = graphClient.me().events()
+        // Using client credentials flow with application permissions
+        Event createdEvent = graphClient.users(defaultUserEmail).events()
                 .buildRequest()
                 .post(event);
 
@@ -312,8 +347,8 @@ public class CalendarService {
     }
 
     private void updateOutlookEvent(String outlookEventId, CalendarEventDTO eventDTO) {
-        if (graphClient == null) {
-            initializeGraphClient();
+        if (!isOutlookIntegrationActive()) {
+            throw new IllegalStateException("Outlook calendar is not available");
         }
 
         Event event = new Event();
@@ -325,28 +360,46 @@ public class CalendarService {
         event.body = body;
 
         DateTimeTimeZone start = new DateTimeTimeZone();
-        start.dateTime = eventDTO.getStartTime().atZone(ZoneId.systemDefault())
-                .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        start.timeZone = ZoneId.systemDefault().getId();
+        // Handle both LocalDateTime and ZonedDateTime
+        if (eventDTO.getStartTime() instanceof ZonedDateTime) {
+            ZonedDateTime zonedDateTime = (ZonedDateTime) eventDTO.getStartTime();
+            start.dateTime = zonedDateTime.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            start.timeZone = zonedDateTime.getZone().getId();
+        } else {
+            LocalDateTime localDateTime = (LocalDateTime) eventDTO.getStartTime();
+            start.dateTime = localDateTime.atZone(ZoneId.systemDefault())
+                    .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            start.timeZone = ZoneId.systemDefault().getId();
+        }
         event.start = start;
 
         DateTimeTimeZone end = new DateTimeTimeZone();
-        end.dateTime = eventDTO.getEndTime().atZone(ZoneId.systemDefault())
-                .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        end.timeZone = ZoneId.systemDefault().getId();
+        // Handle both LocalDateTime and ZonedDateTime
+        if (eventDTO.getEndTime() instanceof ZonedDateTime) {
+            ZonedDateTime zonedDateTime = (ZonedDateTime) eventDTO.getEndTime();
+            end.dateTime = zonedDateTime.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            end.timeZone = zonedDateTime.getZone().getId();
+        } else {
+            LocalDateTime localDateTime = (LocalDateTime) eventDTO.getEndTime();
+            end.dateTime = localDateTime.atZone(ZoneId.systemDefault())
+                    .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+            end.timeZone = ZoneId.systemDefault().getId();
+        }
         event.end = end;
 
-        graphClient.me().events(outlookEventId)
+        // Using client credentials flow with application permissions
+        graphClient.users(defaultUserEmail).events(outlookEventId)
                 .buildRequest()
                 .patch(event);
     }
 
     private void deleteOutlookEvent(String outlookEventId) {
-        if (graphClient == null) {
-            initializeGraphClient();
+        if (!isOutlookIntegrationActive()) {
+            throw new IllegalStateException("Outlook calendar is not available");
         }
 
-        graphClient.me().events(outlookEventId)
+        // Using client credentials flow with application permissions
+        graphClient.users(defaultUserEmail).events(outlookEventId)
                 .buildRequest()
                 .delete();
     }

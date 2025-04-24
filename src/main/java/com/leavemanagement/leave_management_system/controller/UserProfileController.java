@@ -1,5 +1,6 @@
 package com.leavemanagement.leave_management_system.controller;
 
+import com.leavemanagement.leave_management_system.dto.FileUploadResultDTO;
 import com.leavemanagement.leave_management_system.dto.UserResponseDto;
 import com.leavemanagement.leave_management_system.dto.UserUpdateDto;
 import com.leavemanagement.leave_management_system.service.FileStorageService;
@@ -51,7 +52,10 @@ public class UserProfileController {
         }
 
         // Upload file to S3
-        String imageUrl = fileStorageService.uploadProfileImage(file, currentUserId);
+        FileUploadResultDTO uploadResult = fileStorageService.uploadProfileImage(file, currentUserId);
+
+        // Extract the URL from the result object
+        String imageUrl = uploadResult.getFileUrl();
 
         // Update user profile with new image URL
         UserUpdateDto updateDto = new UserUpdateDto();

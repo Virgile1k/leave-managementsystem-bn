@@ -71,6 +71,7 @@ public class SecurityConfig {
                         .requestMatchers("/webjars/**").permitAll()
                         .requestMatchers("/configuration/**").permitAll()
 
+
                         // Health check endpoint
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
 
@@ -79,6 +80,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/leave-types/**").hasAnyAuthority("ROLE_ADMIN", "ROLE_MANAGER")
                         .requestMatchers("/api/v1/leave-balances/calculate").hasAuthority("ROLE_ADMIN")
                         .requestMatchers("/api/v1/reports/**").hasAnyAuthority("ROLE_ADMIN", "ROLE_MANAGER")
+                        .requestMatchers("/api/v1/leaves/**").hasAnyAuthority("ROLE_ADMIN", "ROLE_MANAGER","ROLE_STAFF")
 
                         // All other requests need authentication
                         .anyRequest().authenticated()

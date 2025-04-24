@@ -8,6 +8,7 @@ import com.leavemanagement.leave_management_system.model.Department;
 import com.leavemanagement.leave_management_system.model.User;
 import com.leavemanagement.leave_management_system.repository.DepartmentRepository;
 import com.leavemanagement.leave_management_system.repository.UserRepository;
+import com.leavemanagement.leave_management_system.util.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -24,7 +25,8 @@ public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
     private final DepartmentRepository departmentRepository;
     private final PasswordEncoder passwordEncoder;
-
+    // Add this to your existing dependencies in the class
+    private final SecurityUtils securityUtils;
     @Override
     @Transactional
     public UserResponseDto createUser(UserRequestDto userRequestDto) {
@@ -64,6 +66,16 @@ public class UserServiceImpl implements UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
         return mapUserToUserResponseDto(user);
+    }
+    @Transactional(readOnly = true)
+    public List<UserResponseDto> getTeamMembersForCurrentUser() {
+        // Get the current user's ID
+        UUID currentUserId = securityUtils.getCurrentUserId();
+
+        // Fetch team members (users who have the current user as their manager)
+        return userRepository.findByManagerId(currentUserId).stream()
+                .map(this::mapUserToUserResponseDto)
+                .collect(Collectors.toList());
     }
 
     @Override
@@ -174,7 +186,7 @@ public class UserServiceImpl implements UserService {
     public List<UserResponseDto> getUsersByRole(String role) {
         try {
             UserRole userRole = UserRole.valueOf(role.toUpperCase());
-            return userRepository.findByRole(userRole.name()).stream()
+            return userRepository.findByRole(UserRole.valueOf(userRole.name())).stream()
                     .map(this::mapUserToUserResponseDto)
                     .collect(Collectors.toList());
         } catch (IllegalArgumentException e) {
@@ -201,7 +213,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional(readOnly = true)
     public List<User> getHRAdmins() {
-        return userRepository.findByRole(UserRole.ADMIN.name());
+        return userRepository.findByRole(UserRole.valueOf(UserRole.ADMIN.name()));
     }
 
     private UserResponseDto mapUserToUserResponseDto(User user) {

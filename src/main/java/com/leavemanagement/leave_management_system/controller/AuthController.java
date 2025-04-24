@@ -31,6 +31,8 @@ public class AuthController {
         return ResponseEntity.ok(authService.authenticateWithMicrosoft(authRequest));
     }
 
+
+
     @GetMapping("/microsoft/callback")
     public ResponseEntity<Void> microsoftOAuthCallback(@RequestParam("code") String code) {
         // Since we're redirecting back to the frontend, we don't need to process anything here

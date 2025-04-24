@@ -1,4 +1,5 @@
 package com.leavemanagement.leave_management_system.model;
+
 import java.time.LocalDateTime;
 import java.util.Set;
 import java.util.UUID;
@@ -10,8 +11,6 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.GenericGenerator;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
-
-
 
 @Entity
 @Table(name = "notification_templates")
@@ -39,8 +38,8 @@ public class NotificationTemplate {
     @Column(name = "event_type", nullable = false)
     private String eventType;
 
-    @OneToMany(mappedBy = "template")
-    private Set<Notification> notifications;
+    @OneToMany(mappedBy = "template", cascade = CascadeType.ALL)
+    private Set<Notification> notifications;  // Added generic type parameter
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

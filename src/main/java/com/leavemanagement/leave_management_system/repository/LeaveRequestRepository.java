@@ -25,4 +25,8 @@ public interface LeaveRequestRepository extends JpaRepository<LeaveRequest, UUID
             "(lr.endDate BETWEEN :startDate AND :endDate) OR " +
             "(lr.startDate <= :startDate AND lr.endDate >= :endDate))")
     List<LeaveRequest> findByDepartmentAndDateRange(UUID departmentId, LocalDate startDate, LocalDate endDate);
+
+
+
+
 }

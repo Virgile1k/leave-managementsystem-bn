@@ -14,4 +14,5 @@ import java.util.List;
 public class TeamCalendarDTO {
     private List<LeaveRequestDTO> teamLeaves;
     private List<HolidayDTO> holidays;
+    private List<CalendarEventDTO> departmentEvents; // Added field for department events
 }

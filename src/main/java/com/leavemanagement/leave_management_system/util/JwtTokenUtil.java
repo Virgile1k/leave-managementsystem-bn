@@ -1,8 +1,12 @@
 package com.leavemanagement.leave_management_system.util;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.MalformedJwtException;
 import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.SignatureException;
+import io.jsonwebtoken.UnsupportedJwtException;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
@@ -81,11 +85,46 @@ public class JwtTokenUtil {
         return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
     }
 
+    // New method: Validate token without UserDetails
+    public Boolean validateToken(String token) {
+        try {
+            // Check if token is parseable and not expired
+            Jwts.parserBuilder()
+                    .setSigningKey(getSigningKey())
+                    .build()
+                    .parseClaimsJws(token);
+            return !isTokenExpired(token);
+        } catch (ExpiredJwtException e) {
+            return false;
+        } catch (SignatureException | MalformedJwtException | UnsupportedJwtException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
     // Check if token is expired
     public Boolean isTokenExpired(String token) {
-        final Date expiration = getExpirationDateFromToken(token);
-        return expiration.before(new Date());
+        try {
+            final Date expiration = getExpirationDateFromToken(token);
+            return expiration.before(new Date());
+        } catch (ExpiredJwtException e) {
+            return true;
+        } catch (Exception e) {
+            return true;
+        }
     }
+
+    public String getUserIdFromToken(String token) {
+        try {
+            // This will depend on how your JWT token is structured
+            Claims claims = getAllClaimsFromToken(token);
+            return claims.get("userId", String.class);
+            // Or you might need to use a different claim name based on your token structure
+        } catch (Exception e) {
+
+            return null;
+        }
+    }
+
 
     // Extract username from token
     public String getUsernameFromToken(String token) {

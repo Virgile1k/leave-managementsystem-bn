@@ -21,6 +21,7 @@ public interface UserService {
     List<UserResponseDto> searchUsers(String searchTerm);
     List<UserSummaryDto> getAllManagers();
     List<User> getHRAdmins();
+    List<UserResponseDto> getTeamMembersForCurrentUser();
     // Add to UserService interface
     UserResponseDto changePassword(UUID userId, String currentPassword, String newPassword);
 }

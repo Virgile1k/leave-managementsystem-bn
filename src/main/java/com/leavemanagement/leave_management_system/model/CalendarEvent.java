@@ -54,4 +54,9 @@ public class CalendarEvent {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    private UUID departmentId;
+    private UUID createdBy;
+    @Column(name = "global")  // Specify the actual column name in your database
+    private boolean isGlobal;
 }

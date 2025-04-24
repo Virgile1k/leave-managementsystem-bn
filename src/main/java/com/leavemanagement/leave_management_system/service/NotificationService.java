@@ -1,140 +1,274 @@
 package com.leavemanagement.leave_management_system.service;
 
-import com.leavemanagement.leave_management_system.model.LeaveRequest;
+import com.leavemanagement.leave_management_system.dto.LeaveRequestDTO;
+import com.leavemanagement.leave_management_system.enums.NotificationType;
 import com.leavemanagement.leave_management_system.model.Notification;
+import com.leavemanagement.leave_management_system.model.NotificationTemplate;
 import com.leavemanagement.leave_management_system.model.User;
 import com.leavemanagement.leave_management_system.repository.NotificationRepository;
+import com.leavemanagement.leave_management_system.repository.NotificationTemplateRepository;
+import com.leavemanagement.leave_management_system.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class NotificationService {
+
     private final NotificationRepository notificationRepository;
+    private final NotificationTemplateRepository notificationTemplateRepository; // Added
+    private final UserRepository userRepository;
     private final EmailService emailService;
-    private final UserService userService;
 
     @Value("${app.frontend.url}")
     private String frontendUrl;
 
-    @Transactional
-    public void sendLeaveRequestNotifications(LeaveRequest leaveRequest) {
-        // Create in-app notification for the manager
-        User manager = leaveRequest.getUser().getManager();
-        if (manager != null) {
-            createLeaveRequestNotification(manager, leaveRequest);
+    /**
+     * Create and save a notification in the database
+     */
+    public Notification createNotification(UUID userId, String title, String message, NotificationType type, UUID referenceId) {
+        LocalDateTime now = LocalDateTime.now();
 
-            // Send email notification to manager
-            String message = String.format("%s has requested leave from %s to %s. Please login to approve/reject.",
-                    leaveRequest.getUser().getFullName(),
-                    leaveRequest.getStartDate(),
-                    leaveRequest.getEndDate());
+        // Fetch the NotificationTemplate based on NotificationType
+        NotificationTemplate template = notificationTemplateRepository.findByEventType(type.name())
+                .orElseThrow(() -> new IllegalStateException("No template found for event type: " + type.name()));
 
-            String approveUrl = frontendUrl + "/leave/approve/" + leaveRequest.getId();
-            String rejectUrl = frontendUrl + "/leave/reject/" + leaveRequest.getId();
-
-            String htmlContent = emailService.generateLeaveRequestHtml(
-                    manager.getFullName(),
-                    "New Leave Request",
-                    message,
-                    true,
-                    approveUrl,
-                    rejectUrl
-            );
-
-            emailService.sendHtmlMessage(manager.getEmail(), "New Leave Request", htmlContent);
-        }
-
-        // Create notification for HR admins
-        List<User> hrAdmins = userService.getHRAdmins();
-        for (User admin : hrAdmins) {
-            createLeaveRequestNotification(admin, leaveRequest);
-
-            // Send email notification to HR admin
-            String message = String.format("%s has requested leave from %s to %s. Please review.",
-                    leaveRequest.getUser().getFullName(),
-                    leaveRequest.getStartDate(),
-                    leaveRequest.getEndDate());
-
-            String approveUrl = frontendUrl + "/leave/approve/" + leaveRequest.getId();
-            String rejectUrl = frontendUrl + "/leave/reject/" + leaveRequest.getId();
-
-            String htmlContent = emailService.generateLeaveRequestHtml(
-                    admin.getFullName(),
-                    "New Leave Request",
-                    message,
-                    true,
-                    approveUrl,
-                    rejectUrl
-            );
-
-            emailService.sendHtmlMessage(admin.getEmail(), "New Leave Request", htmlContent);
-        }
-    }
-
-    private void createLeaveRequestNotification(User recipient, LeaveRequest leaveRequest) {
         Notification notification = Notification.builder()
-                .userId(recipient)
-                .title("New Leave Request")
-                .content(String.format("%s has requested leave from %s to %s",
-                        leaveRequest.getUser().getFullName(),
-                        leaveRequest.getStartDate(),
-                        leaveRequest.getEndDate()))
+                .userId(userId)
+                .title(title)
+                .message(message)
+                .content(message)
+                .type(type)
+                .requestId(referenceId)
                 .isRead(false)
-                .requestId(leaveRequest)
-                .sentAt(LocalDateTime.now())
+                .createdAt(now)
+                .sentAt(now)
+                .updatedAt(now)
+                .template(template) // Set the template
                 .build();
 
-        notificationRepository.save(notification);
+        return notificationRepository.save(notification);
     }
 
-    @Transactional
-    public void sendLeaveStatusUpdateNotifications(LeaveRequest leaveRequest) {
-        // Create in-app notification for the employee
-        Notification employeeNotification = Notification.builder()
-                .userId(leaveRequest.getUser())
-                .title("Leave Request Status Updated")
-                .content(String.format("Your leave request from %s to %s has been %s",
-                        leaveRequest.getStartDate(),
-                        leaveRequest.getEndDate(),
-                        leaveRequest.getStatus().getName()))
-                .isRead(false)
-                .requestId(leaveRequest)
-                .sentAt(LocalDateTime.now())
-                .build();
+    /**
+     * Send a notification for a leave request that was submitted
+     */
+    public void notifyLeaveRequestSubmitted(LeaveRequestDTO leaveRequest, List<User> managers) {
+        User employee = userRepository.findById(leaveRequest.getUserId())
+                .orElseThrow(() -> new RuntimeException("User not found"));
 
-        notificationRepository.save(employeeNotification);
+        // Notify employee
+        String employeeMessage = "Your leave request has been submitted and is pending approval.";
+        createNotification(
+                employee.getId(),
+                "Leave Request Submitted",
+                employeeMessage,
+                NotificationType.LEAVE_SUBMITTED,
+                leaveRequest.getId()
+        );
 
-        // Send email notification to employee
-        String message = String.format("Your leave request from %s to %s has been %s. %s",
-                leaveRequest.getStartDate(),
-                leaveRequest.getEndDate(),
-                leaveRequest.getStatus().getName(),
-                leaveRequest.getComments() != null ? "Comments: " + leaveRequest.getComments() : "");
+        // Send email to employee
+        String employeeEmail = employee.getEmail();
+        String employeeHtml = emailService.generateLeaveStatusHtml(
+                employee.getFullName(),
+                "Leave Request Submitted",
+                employeeMessage
+        );
+        emailService.sendHtmlMessage(employeeEmail, "Leave Request Submitted", employeeHtml);
 
-        String htmlContent = emailService.generateLeaveStatusHtml(
-                leaveRequest.getUser().getFullName(),
-                "Leave Request Status Updated",
+        // Notify all managers
+        for (User manager : managers) {
+            String managerMessage = employee.getFullName() + " has submitted a leave request that requires your approval.";
+            createNotification(
+                    manager.getId(),
+                    "New Leave Request Pending Approval",
+                    managerMessage,
+                    NotificationType.LEAVE_APPROVAL_PENDING,
+                    leaveRequest.getId()
+            );
+
+            // Send email to managers with approval links
+            String approveUrl = frontendUrl + "/leaves/approve/" + leaveRequest.getId();
+            String rejectUrl = frontendUrl + "/leaves/reject/" + leaveRequest.getId();
+
+            String managerHtml = emailService.generateLeaveRequestHtml(
+                    manager.getFullName(),
+                    "Leave Request Pending Approval",
+                    managerMessage,
+                    true,
+                    approveUrl,
+                    rejectUrl
+            );
+
+            emailService.sendHtmlMessage(manager.getEmail(), "Leave Request Pending Approval", managerHtml);
+        }
+    }
+
+    /**
+     * Send a notification for a leave request that was updated (approved or rejected)
+     */
+    public void notifyLeaveRequestUpdated(LeaveRequestDTO leaveRequest, String status) {
+        User employee = userRepository.findById(leaveRequest.getUserId())
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        String title = "Leave Request " + status;
+        String message = "Your leave request has been " + status.toLowerCase() + ".";
+        if (leaveRequest.getComments() != null && !leaveRequest.getComments().isEmpty()) {
+            message += " Comments: " + leaveRequest.getComments();
+        }
+
+        // Create in-app notification
+        createNotification(
+                employee.getId(),
+                title,
+                message,
+                "APPROVED".equals(status) ? NotificationType.LEAVE_APPROVED : NotificationType.LEAVE_REJECTED,
+                leaveRequest.getId()
+        );
+
+        // Send email notification
+        String html = emailService.generateLeaveStatusHtml(
+                employee.getFullName(),
+                title,
                 message
         );
 
-        emailService.sendHtmlMessage(
-                leaveRequest.getUser().getEmail(),
-                "Leave Request Status Updated",
-                htmlContent
-        );
+        emailService.sendHtmlMessage(employee.getEmail(), title, html);
     }
 
-    @Transactional
+    /**
+     * Get all unread notifications for a user
+     */
+    public List<Notification> getUnreadNotifications(UUID userId) {
+        return notificationRepository.findByUserIdAndIsReadFalse(userId);
+    }
+
+    /**
+     * Get all notifications for a user
+     */
+    public List<Notification> getAllNotifications(UUID userId) {
+        return notificationRepository.findByUserIdOrderByCreatedAtDesc(userId);
+    }
+
+    /**
+     * Mark a notification as read
+     */
+    public Notification markAsRead(UUID notificationId) {
+        Notification notification = notificationRepository.findById(notificationId)
+                .orElseThrow(() -> new RuntimeException("Notification not found"));
+
+        notification.setIsRead(true);
+        notification.setReadAt(LocalDateTime.now());
+
+        return notificationRepository.save(notification);
+    }
+
+    /**
+     * Mark all notifications for a user as read
+     */
+    public void markAllAsRead(UUID userId) {
+        List<Notification> unreadNotifications = notificationRepository.findByUserIdAndIsReadFalse(userId);
+
+        for (Notification notification : unreadNotifications) {
+            notification.setIsRead(true);
+            notification.setReadAt(LocalDateTime.now());
+        }
+
+        notificationRepository.saveAll(unreadNotifications);
+    }
+
+
+    /**
+     * Daily job to send reminders for upcoming leaves (one day before)
+     */
+    @Scheduled(cron = "0 0 8 * * ?") // Run every day at 8:00 AM
     public void sendUpcomingLeaveReminders() {
-        // TODO: Implementation for scheduled task to remind employees of upcoming leave
-        // Implementation would involve finding leaves that start in X days and sending notifications
+        log.info("Running scheduled job to send upcoming leave reminders");
+
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+
+        // Find all approved leave requests starting tomorrow
+        List<LeaveRequestDTO> upcomingLeaves = notificationRepository.findUpcomingLeaves(tomorrow);
+
+        for (LeaveRequestDTO leave : upcomingLeaves) {
+            User employee = userRepository.findById(leave.getUserId())
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+
+            // Notify employee
+            String message = "Your " + leave.getLeaveTypeName() + " leave starts tomorrow.";
+            createNotification(
+                    employee.getId(),
+                    "Upcoming Leave Reminder",
+                    message,
+                    NotificationType.LEAVE_REMINDER,
+                    leave.getId()
+            );
+
+            // Send email to employee
+            String html = emailService.generateLeaveStatusHtml(
+                    employee.getFullName(),
+                    "Upcoming Leave Reminder",
+                    message
+            );
+
+            emailService.sendHtmlMessage(employee.getEmail(), "Upcoming Leave Reminder", html);
+        }
+    }
+
+    /**
+     * Daily job to send reminders for pending approvals (if pending for more than 2 days)
+     */
+    @Scheduled(cron = "0 0 9 * * ?") // Run every day at 9:00 AM
+    public void sendPendingApprovalReminders() {
+        log.info("Running scheduled job to send pending approval reminders");
+
+        LocalDateTime twoDaysAgo = LocalDateTime.now().minusDays(2);
+
+        // Find all leave requests that have been pending for more than 2 days
+        List<LeaveRequestDTO> pendingRequests = notificationRepository.findPendingRequests(twoDaysAgo);
+
+        for (LeaveRequestDTO leave : pendingRequests) {
+            // Get all managers who need to approve
+            List<User> managers = userRepository.findManagersByDepartmentId(leave.getDepartmentId());
+
+            User employee = userRepository.findById(leave.getUserId())
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+
+            for (User manager : managers) {
+                // Notify managers
+                String message = "A leave request from " + employee.getFullName() + " has been pending for more than 2 days.";
+                createNotification(
+                        manager.getId(),
+                        "Pending Approval Reminder",
+                        message,
+                        NotificationType.APPROVAL_REMINDER,
+                        leave.getId()
+                );
+
+                // Send email to managers with approval links
+                String approveUrl = frontendUrl + "/leaves/approve/" + leave.getId();
+                String rejectUrl = frontendUrl + "/leaves/reject/" + leave.getId();
+
+                String html = emailService.generateLeaveRequestHtml(
+                        manager.getFullName(),
+                        "Pending Approval Reminder",
+                        message,
+                        true,
+                        approveUrl,
+                        rejectUrl
+                );
+
+                emailService.sendHtmlMessage(manager.getEmail(), "Pending Approval Reminder", html);
+            }
+        }
     }
 }

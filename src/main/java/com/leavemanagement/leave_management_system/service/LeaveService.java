@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -15,6 +16,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 @RequiredArgsConstructor
@@ -26,9 +29,51 @@ public class LeaveService {
     private final DocumentRepository documentRepository;
     private final HolidayRepository holidayRepository;
     private final UserService userService;
-    private final NotificationService notificationService;
     private final CalendarService calendarService;
-    private final UserRepository userRepository; // Added to fetch User entities directly
+    private final UserRepository userRepository;
+    private final NotificationService notificationService;
+
+    private static final Logger logger = LoggerFactory.getLogger(LeaveService.class);
+
+    @PostConstruct
+    public void initializeStatuses() {
+        logger.info("Initializing leave request statuses");
+        // Check if "PENDING" status exists, if not create it
+        if (!leaveRequestStatusRepository.findByName("PENDING").isPresent()) {
+            logger.info("Creating PENDING status");
+            LeaveRequestStatus pendingStatus = new LeaveRequestStatus();
+            pendingStatus.setName("PENDING");
+            pendingStatus.setDescription("Leave request is pending approval");
+            leaveRequestStatusRepository.save(pendingStatus);
+        }
+
+        // Add other required statuses
+        if (!leaveRequestStatusRepository.findByName("APPROVED").isPresent()) {
+            logger.info("Creating APPROVED status");
+            LeaveRequestStatus approvedStatus = new LeaveRequestStatus();
+            approvedStatus.setName("APPROVED");
+            approvedStatus.setDescription("Leave request has been approved");
+            leaveRequestStatusRepository.save(approvedStatus);
+        }
+
+        if (!leaveRequestStatusRepository.findByName("REJECTED").isPresent()) {
+            logger.info("Creating REJECTED status");
+            LeaveRequestStatus rejectedStatus = new LeaveRequestStatus();
+            rejectedStatus.setName("REJECTED");
+            rejectedStatus.setDescription("Leave request has been rejected");
+            leaveRequestStatusRepository.save(rejectedStatus);
+        }
+
+        if (!leaveRequestStatusRepository.findByName("CANCELLED").isPresent()) {
+            logger.info("Creating CANCELLED status");
+            LeaveRequestStatus cancelledStatus = new LeaveRequestStatus();
+            cancelledStatus.setName("CANCELLED");
+            cancelledStatus.setDescription("Leave request has been cancelled");
+            leaveRequestStatusRepository.save(cancelledStatus);
+        }
+
+        logger.info("Status initialization complete");
+    }
 
     public List<LeaveTypeDTO> getAllLeaveTypes() {
         return leaveTypeRepository.findByIsActiveTrue().stream()
@@ -49,9 +94,10 @@ public class LeaveService {
                 .collect(Collectors.toList());
     }
 
+
     @Transactional
     public LeaveRequestDTO createLeaveRequest(UUID userId, LeaveRequestCreateDTO createDTO) {
-        // Get user entity from repository instead of using the non-existent method
+        // Get user entity from repository
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
@@ -76,9 +122,19 @@ public class LeaveService {
         leaveBalance.setPendingDays(leaveBalance.getPendingDays().add(leaveDuration));
         leaveBalanceRepository.save(leaveBalance);
 
-        // Get pending status
-        LeaveRequestStatus pendingStatus = leaveRequestStatusRepository.findByName("PENDING")
-                .orElseThrow(() -> new ResourceNotFoundException("Status not found"));
+        // Try to find PENDING status, with fallback to create it if needed
+        LeaveRequestStatus pendingStatus;
+        Optional<LeaveRequestStatus> statusOpt = leaveRequestStatusRepository.findByName("PENDING");
+
+        if (statusOpt.isPresent()) {
+            pendingStatus = statusOpt.get();
+        } else {
+            logger.info("PENDING status not found during request creation, creating it now");
+            pendingStatus = new LeaveRequestStatus();
+            pendingStatus.setName("PENDING");
+            pendingStatus.setDescription("Leave request is pending approval");
+            pendingStatus = leaveRequestStatusRepository.save(pendingStatus);
+        }
 
         // Create leave request
         LeaveRequest leaveRequest = LeaveRequest.builder()
@@ -107,10 +163,11 @@ public class LeaveService {
         createCalendarEvent(savedRequest);
 
         // Send notifications
-        notificationService.sendLeaveRequestNotifications(savedRequest);
+        LeaveRequestDTO savedRequestDTO = convertToLeaveRequestDTO(savedRequest);
+        List<User> managers = userRepository.findManagersByDepartmentId(user.getDepartment().getId());
+        notificationService.notifyLeaveRequestSubmitted(savedRequestDTO, managers);
 
-        return convertToLeaveRequestDTO(leaveRequestRepository.findById(savedRequest.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("Leave request not found")));
+        return savedRequestDTO;
     }
 
     @Transactional
@@ -118,8 +175,19 @@ public class LeaveService {
         LeaveRequest leaveRequest = leaveRequestRepository.findById(requestId)
                 .orElseThrow(() -> new ResourceNotFoundException("Leave request not found"));
 
-        LeaveRequestStatus newStatus = leaveRequestStatusRepository.findByName(updateDTO.getStatus())
-                .orElseThrow(() -> new ResourceNotFoundException("Status not found"));
+        // Try to find status with fallback to create it if needed
+        LeaveRequestStatus newStatus;
+        Optional<LeaveRequestStatus> statusOpt = leaveRequestStatusRepository.findByName(updateDTO.getStatus());
+
+        if (statusOpt.isPresent()) {
+            newStatus = statusOpt.get();
+        } else {
+            logger.info("Status '{}' not found during status update, creating it now", updateDTO.getStatus());
+            newStatus = new LeaveRequestStatus();
+            newStatus.setName(updateDTO.getStatus());
+            newStatus.setDescription(updateDTO.getStatus() + " status");
+            newStatus = leaveRequestStatusRepository.save(newStatus);
+        }
 
         LeaveRequestStatus oldStatus = leaveRequest.getStatus();
         leaveRequest.setStatus(newStatus);
@@ -155,30 +223,56 @@ public class LeaveService {
         updateCalendarEvent(updatedRequest);
 
         // Send notifications
-        notificationService.sendLeaveStatusUpdateNotifications(updatedRequest);
+        LeaveRequestDTO updatedRequestDTO = convertToLeaveRequestDTO(updatedRequest);
+        notificationService.notifyLeaveRequestUpdated(updatedRequestDTO, updateDTO.getStatus());
 
-        return convertToLeaveRequestDTO(updatedRequest);
+        return updatedRequestDTO;
     }
 
     @Transactional
     public LeaveBalanceDTO adjustLeaveBalance(LeaveBalanceAdjustmentDTO adjustmentDTO) {
+        // Add debug logging
+        logger.debug("Adjusting leave balance: {}", adjustmentDTO);
+
+        // Default to current year if year is null
+        int year = adjustmentDTO.getYear() != null
+                ? adjustmentDTO.getYear()
+                : LocalDate.now().getYear();
+
         LeaveBalance leaveBalance = leaveBalanceRepository
                 .findByUserIdAndLeaveTypeIdAndYear(
                         adjustmentDTO.getUserId(),
                         adjustmentDTO.getLeaveTypeId(),
-                        adjustmentDTO.getYear())
+                        year)
                 .orElseGet(() -> getOrCreateLeaveBalance(
                         adjustmentDTO.getUserId(),
                         adjustmentDTO.getLeaveTypeId(),
-                        adjustmentDTO.getYear()));
+                        year));
 
-        leaveBalance.setAdjustmentDays(adjustmentDTO.getAdjustmentDays());
-        leaveBalance.setTotalDays(calculateTotalDays(leaveBalance));
+        // Log the current state before changes
+        logger.debug("Before adjustment - Balance: {}", leaveBalance);
+
+        // Set adjustment days with null check
+        BigDecimal adjustmentDays = adjustmentDTO.getAdjustmentDays() != null
+                ? adjustmentDTO.getAdjustmentDays()
+                : BigDecimal.ZERO;
+
+        leaveBalance.setAdjustmentDays(adjustmentDays);
+
+        // Recalculate total days
+        BigDecimal newTotalDays = calculateTotalDays(leaveBalance);
+        leaveBalance.setTotalDays(newTotalDays);
+
+        // Log what we're about to save
+        logger.debug("After adjustment - Balance with new total days: {}", leaveBalance);
 
         LeaveBalance savedBalance = leaveBalanceRepository.save(leaveBalance);
+
+        // Make sure the save worked
+        logger.debug("Saved balance from database: {}", savedBalance);
+
         return convertToLeaveBalanceDTO(savedBalance);
     }
-
     public List<LeaveRequestDTO> getPendingApprovals() {
         return leaveRequestRepository.findByStatus("PENDING").stream()
                 .map(this::convertToLeaveRequestDTO)
@@ -223,7 +317,7 @@ public class LeaveService {
         if (existingBalance.isPresent()) {
             return existingBalance.get();
         } else {
-            // Get user entity from repository instead of using getUserEntityById
+            // Get user entity from repository
             User user = userRepository.findById(userId)
                     .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
@@ -259,6 +353,9 @@ public class LeaveService {
     }
 
     private BigDecimal calculateTotalDays(LeaveBalance leaveBalance) {
+        // Log entry point
+        logger.debug("Calculating total days for balance: {}", leaveBalance);
+
         BigDecimal baseAccrual = leaveBalance.getLeaveType().getAccrualRate().multiply(new BigDecimal("12"));
 
         // For PTO, use standard 20 days
@@ -266,18 +363,30 @@ public class LeaveService {
             baseAccrual = new BigDecimal("20");
         }
 
-        // Add adjustment days
-        BigDecimal totalWithAdjustment = baseAccrual.add(leaveBalance.getAdjustmentDays());
+        // Add adjustment days (with null check)
+        BigDecimal adjustmentDays = leaveBalance.getAdjustmentDays() != null ?
+                leaveBalance.getAdjustmentDays() : BigDecimal.ZERO;
+
+        BigDecimal totalWithAdjustment = baseAccrual.add(adjustmentDays);
+
+        // Log calculations
+        logger.debug("Base accrual: {}, Adjustment: {}, Total before cap: {}",
+                baseAccrual, adjustmentDays, totalWithAdjustment);
 
         // Cap at max days if applicable
+        BigDecimal result;
         if (leaveBalance.getLeaveType().getMaxDays() != null &&
                 totalWithAdjustment.compareTo(new BigDecimal(leaveBalance.getLeaveType().getMaxDays())) > 0) {
-            return new BigDecimal(leaveBalance.getLeaveType().getMaxDays());
+            result = new BigDecimal(leaveBalance.getLeaveType().getMaxDays());
+            logger.debug("Capping at max days: {}", result);
+        } else {
+            result = totalWithAdjustment;
         }
 
-        return totalWithAdjustment;
+        // Log final result
+        logger.debug("Final total days: {}", result);
+        return result;
     }
-
     private void createCalendarEvent(LeaveRequest leaveRequest) {
         String title = leaveRequest.getUser().getFullName() + " - " + leaveRequest.getLeaveType().getName();
 
@@ -293,7 +402,25 @@ public class LeaveService {
                 .referenceId(leaveRequest.getId())
                 .build();
 
-        calendarService.createCalendarEvent(calendarEventDTO);
+        // For now, passing null as departmentId (global/company-wide event)
+        UUID departmentId = null; // This creates a global event
+
+        calendarService.createCalendarEvent(calendarEventDTO, departmentId, leaveRequest.getUser().getId());
+    }
+
+    @Transactional
+    public LeaveTypeDTO createLeaveType(LeaveTypeCreateDTO createDTO) {
+        LeaveType leaveType = LeaveType.builder()
+                .name(createDTO.getName())
+                .description(createDTO.getDescription())
+                .accrualRate(createDTO.getAccrualRate())
+                .requiresDoc(createDTO.getRequiresDoc())
+                .maxDays(createDTO.getMaxDays())
+                .isActive(true)
+                .build();
+
+        LeaveType savedLeaveType = leaveTypeRepository.save(leaveType);
+        return convertToLeaveTypeDTO(savedLeaveType);
     }
 
     private void updateCalendarEvent(LeaveRequest leaveRequest) {
@@ -302,9 +429,12 @@ public class LeaveService {
         if (!events.isEmpty()) {
             CalendarEvent event = events.get(0);
 
+            // For now, passing null as departmentId (global/company-wide event)
+            UUID departmentId = null; // This creates a global event
+
             // If request is rejected, delete the event
             if ("REJECTED".equals(leaveRequest.getStatus().getName())) {
-                calendarService.deleteCalendarEvent(event.getId());
+                calendarService.deleteCalendarEvent(event.getId(), departmentId, leaveRequest.getUser().getId());
                 return;
             }
 
@@ -322,7 +452,7 @@ public class LeaveService {
                     .outlookEventId(event.getOutlookEventId())
                     .build();
 
-            calendarService.updateCalendarEvent(calendarEventDTO);
+            calendarService.updateCalendarEvent(calendarEventDTO, departmentId, leaveRequest.getUser().getId());
         }
     }
 
@@ -339,10 +469,13 @@ public class LeaveService {
                 List.of();
 
         BigDecimal leaveDuration = calculateBusinessDays(leaveRequest.getStartDate(), leaveRequest.getEndDate());
+        User user = leaveRequest.getUser();
 
         return LeaveRequestDTO.builder()
                 .id(leaveRequest.getId())
-                .userId(leaveRequest.getUser().getId())
+                .userId(user.getId())
+                .userName(user.getFullName())  // Add user name
+                .email(user.getEmail())        // Add email
                 .leaveTypeId(leaveRequest.getLeaveType().getId())
                 .leaveTypeName(leaveRequest.getLeaveType().getName())
                 .startDate(leaveRequest.getStartDate())

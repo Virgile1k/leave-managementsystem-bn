@@ -56,12 +56,11 @@ public class UserController {
         return ResponseEntity.ok(userService.getAllUsers());
     }
 
-    @GetMapping("/manager/{managerId}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER') or @userSecurity.isCurrentUserManager(#managerId)")
-    public ResponseEntity<List<UserResponseDto>> getUsersByManager(@PathVariable UUID managerId) {
-        return ResponseEntity.ok(userService.getUsersByManager(managerId));
+    @GetMapping("/my-team")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    public ResponseEntity<List<UserResponseDto>> getMyTeamMembers() {
+        return ResponseEntity.ok(userService.getTeamMembersForCurrentUser());
     }
-
     @GetMapping("/department/{departmentId}")
     @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<List<UserResponseDto>> getUsersByDepartment(@PathVariable UUID departmentId) {
@@ -81,7 +80,7 @@ public class UserController {
     }
 
     @GetMapping("/managers")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
     public ResponseEntity<List<UserSummaryDto>> getAllManagers() {
         return ResponseEntity.ok(userService.getAllManagers());
     }

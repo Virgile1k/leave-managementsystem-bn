@@ -1,16 +1,11 @@
 package com.leavemanagement.leave_management_system.model;
+
+import com.leavemanagement.leave_management_system.enums.NotificationType;
+import jakarta.persistence.*;
+import lombok.*;
+
 import java.time.LocalDateTime;
 import java.util.UUID;
-import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import org.hibernate.annotations.GenericGenerator;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
-
-
 
 @Entity
 @Table(name = "notifications")
@@ -19,45 +14,43 @@ import org.hibernate.annotations.UpdateTimestamp;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Notification {
-
     @Id
-    @GeneratedValue(generator = "UUID")
-    @GenericGenerator(name = "UUID", strategy = "org.hibernate.id.UUIDGenerator")
-    @Column(name = "id", updatable = false, nullable = false)
+    @GeneratedValue
     private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User userId;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "request_id")
-    private LeaveRequest requestId;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "template_id", nullable = false)
-    private NotificationTemplate template;
-
-    @Column(name = "title", nullable = false)
-    private String title;
-
-    @Column(name = "content", nullable = false)
-    private String content;
-
-    @Column(name = "is_read", nullable = false)
-    private Boolean isRead;
-
-    @Column(name = "sent_at", nullable = false)
+    @Column(nullable = false)
     private LocalDateTime sentAt;
 
-    @Column(name = "read_at")
-    private LocalDateTime readAt;
+    @Column(nullable = false)
+    private LocalDateTime updatedAt;
 
-    @CreationTimestamp
-    @Column(name = "created_at", nullable = false, updatable = false)
+    @Column(nullable = false)
+    private UUID userId;
+
+    @Column(nullable = false)
+    private String title;
+
+    @Column(nullable = false, length = 1000)
+    private String message;
+
+    @Column(nullable = false)
+    private String content;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private NotificationType type;
+
+    private UUID requestId;  // This was previously referenceId
+
+    @Column(nullable = false)
+    private Boolean isRead;
+
+    @Column(nullable = false)
     private LocalDateTime createdAt;
 
-    @UpdateTimestamp
-    @Column(name = "updated_at", nullable = false)
-    private LocalDateTime updatedAt;
+    private LocalDateTime readAt;
+
+    @ManyToOne(optional = false)  // This makes the relationship required
+    @JoinColumn(name = "template_id", nullable = false)  // Explicitly set nullable=false
+    private NotificationTemplate template;
 }
