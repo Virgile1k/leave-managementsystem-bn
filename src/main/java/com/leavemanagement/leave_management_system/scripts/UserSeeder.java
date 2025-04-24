@@ -13,6 +13,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Configuration
 public class UserSeeder {
@@ -29,90 +30,113 @@ public class UserSeeder {
     @Bean
     CommandLineRunner seedUsers() {
         return args -> {
-            // Delete all existing users to ensure fresh data on each start
-            userRepository.deleteAll();
-            System.out.println("All existing users deleted for fresh reload");
+            // Only delete users if we're doing a complete refresh
+            // userRepository.deleteAll();
+            // System.out.println("All existing users deleted for fresh reload");
 
             // Create and save departments first
-            Department hrDept = createAndSaveDepartment("Human Resources", "Human Resources Department");
-            Department techDept = createAndSaveDepartment("Technology", "Technology Department");
-            Department financeDept = createAndSaveDepartment("Finance", "Finance Department");
-            Department marketingDept = createAndSaveDepartment("Marketing", "Marketing Department");
+            Department adminDept = createOrGetDepartment("Administration", "System Administration Department");
+            Department hrDept = createOrGetDepartment("Human Resources", "Human Resources Department");
+            Department techDept = createOrGetDepartment("Technology", "Technology Department");
+            Department financeDept = createOrGetDepartment("Finance", "Finance Department");
+            Department marketingDept = createOrGetDepartment("Marketing", "Marketing Department");
 
-            System.out.println("Departments created and saved to database");
+            System.out.println("Departments created or retrieved from database");
 
-            // Create admin user
-            User admin = User.builder()
-                    .email("ndayambaje.virgile@techsroutine.com")
-                    .fullName("System Administrator")
-                    .password(passwordEncoder.encode("admin123"))
-                    .role(UserRole.ADMIN)
-                    .profilePicUrl("https://randomuser.me/api/portraits/men/1.jpg")
-                    .build();
+            // Create admin users in Administration department
+            User admin = createOrUpdateUser(
+                    "ndayambaje.virgile@techsroutine.com",
+                    "System Administrator",
+                    "admin123",
+                    UserRole.ADMIN,
+                    null,
+                    adminDept,
+                    "https://randomuser.me/api/portraits/men/1.jpg"
+            );
 
-            userRepository.save(admin);
-            System.out.println("Admin user created");
+            User virgileAdmin = createOrUpdateUser(
+                    "ndayambajevg16bussiness@gmail.com",
+                    "Virgile Ndayambaje",
+                    "password123",
+                    UserRole.ADMIN,
+                    null,
+                    adminDept,
+                    "https://randomuser.me/api/portraits/men/2.jpg"
+            );
 
-            // Create additional admin user
-            User virgileAdmin = User.builder()
-                    .email("ndayambajevg16bussiness@gmail.com")
-                    .fullName("Virgile Ndayambaje")
-                    .password(passwordEncoder.encode("password123"))
-                    .role(UserRole.ADMIN)
-                    .profilePicUrl("https://randomuser.me/api/portraits/men/2.jpg")
-                    .build();
-
-            userRepository.save(virgileAdmin);
-            System.out.println("Additional admin user created");
+            System.out.println("Admin users created or updated");
 
             // Create managers first
-            User hrManager = createUser("hr.manager@company.com", "HR Manager", "password123", UserRole.MANAGER, null, hrDept);
-            User techManager = createUser("tech.manager@company.com", "Tech Manager", "password123", UserRole.MANAGER, null, techDept);
-            User financeManager = createUser("finance.manager@company.com", "Finance Manager", "password123", UserRole.MANAGER, null, financeDept);
-            User marketingManager = createUser("marketing.manager@company.com", "Marketing Manager", "password123", UserRole.MANAGER, null, marketingDept);
+            User hrManager = createOrUpdateUser(
+                    "hr.manager@company.com",
+                    "HR Manager",
+                    "password123",
+                    UserRole.MANAGER,
+                    null,
+                    hrDept,
+                    "https://randomuser.me/api/portraits/lego/1.jpg"
+            );
 
-            // Save managers
-            List<User> managers = new ArrayList<>();
-            managers.add(hrManager);
-            managers.add(techManager);
-            managers.add(financeManager);
-            managers.add(marketingManager);
-            List<User> savedManagers = userRepository.saveAll(managers);
+            User techManager = createOrUpdateUser(
+                    "tech.manager@company.com",
+                    "Tech Manager",
+                    "password123",
+                    UserRole.MANAGER,
+                    null,
+                    techDept,
+                    "https://randomuser.me/api/portraits/lego/1.jpg"
+            );
 
-            // Get the saved managers with their IDs
-            User savedHrManager = savedManagers.get(0);
-            User savedTechManager = savedManagers.get(1);
-            User savedFinanceManager = savedManagers.get(2);
-            User savedMarketingManager = savedManagers.get(3);
+            User financeManager = createOrUpdateUser(
+                    "finance.manager@company.com",
+                    "Finance Manager",
+                    "password123",
+                    UserRole.MANAGER,
+                    null,
+                    financeDept,
+                    "https://randomuser.me/api/portraits/lego/1.jpg"
+            );
 
-            // Create employees for each department
-            List<User> employees = new ArrayList<>();
+            User marketingManager = createOrUpdateUser(
+                    "marketing.manager@company.com",
+                    "Marketing Manager",
+                    "password123",
+                    UserRole.MANAGER,
+                    null,
+                    marketingDept,
+                    "https://randomuser.me/api/portraits/lego/1.jpg"
+            );
 
-            // HR department employees
-            employees.add(createUser("hr.employee1@company.com", "HR Employee 1", "password123", UserRole.STAFF, savedHrManager, hrDept));
-            employees.add(createUser("hr.employee2@company.com", "HR Employee 2", "password123", UserRole.STAFF, savedHrManager, hrDept));
+            System.out.println("Managers created or updated");
 
-            // Tech department employees
-            employees.add(createUser("developer1@company.com", "Developer 1", "password123", UserRole.STAFF, savedTechManager, techDept));
-            employees.add(createUser("developer2@company.com", "Developer 2", "password123", UserRole.STAFF, savedTechManager, techDept));
-            employees.add(createUser("qa.engineer@company.com", "QA Engineer", "password123", UserRole.STAFF, savedTechManager, techDept));
-            employees.add(createUser("devops@company.com", "DevOps Engineer", "password123", UserRole.STAFF, savedTechManager, techDept));
+            // Create or update employees for each department
+            createOrUpdateUser("hr.employee1@company.com", "HR Employee 1", "password123", UserRole.STAFF, hrManager, hrDept, "https://randomuser.me/api/portraits/lego/1.jpg");
+            createOrUpdateUser("hr.employee2@company.com", "HR Employee 2", "password123", UserRole.STAFF, hrManager, hrDept, "https://randomuser.me/api/portraits/lego/1.jpg");
 
-            // Finance department employees
-            employees.add(createUser("accountant1@company.com", "Accountant 1", "password123", UserRole.STAFF, savedFinanceManager, financeDept));
-            employees.add(createUser("accountant2@company.com", "Accountant 2", "password123", UserRole.STAFF, savedFinanceManager, financeDept));
+            createOrUpdateUser("developer1@company.com", "Developer 1", "password123", UserRole.STAFF, techManager, techDept, "https://randomuser.me/api/portraits/lego/1.jpg");
+            createOrUpdateUser("developer2@company.com", "Developer 2", "password123", UserRole.STAFF, techManager, techDept, "https://randomuser.me/api/portraits/lego/1.jpg");
+            createOrUpdateUser("qa.engineer@company.com", "QA Engineer", "password123", UserRole.STAFF, techManager, techDept, "https://randomuser.me/api/portraits/lego/1.jpg");
+            createOrUpdateUser("devops@company.com", "DevOps Engineer", "password123", UserRole.STAFF, techManager, techDept, "https://randomuser.me/api/portraits/lego/1.jpg");
 
-            // Marketing department employees
-            employees.add(createUser("marketing.specialist1@company.com", "Marketing Specialist 1", "password123", UserRole.STAFF, savedMarketingManager, marketingDept));
-            employees.add(createUser("marketing.specialist2@company.com", "Marketing Specialist 2", "password123", UserRole.STAFF, savedMarketingManager, marketingDept));
+            createOrUpdateUser("accountant1@company.com", "Accountant 1", "password123", UserRole.STAFF, financeManager, financeDept, "https://randomuser.me/api/portraits/lego/1.jpg");
+            createOrUpdateUser("accountant2@company.com", "Accountant 2", "password123", UserRole.STAFF, financeManager, financeDept, "https://randomuser.me/api/portraits/lego/1.jpg");
 
-            userRepository.saveAll(employees);
+            createOrUpdateUser("marketing.specialist1@company.com", "Marketing Specialist 1", "password123", UserRole.STAFF, marketingManager, marketingDept, "https://randomuser.me/api/portraits/lego/1.jpg");
+            createOrUpdateUser("marketing.specialist2@company.com", "Marketing Specialist 2", "password123", UserRole.STAFF, marketingManager, marketingDept, "https://randomuser.me/api/portraits/lego/1.jpg");
 
             System.out.println("User seeding completed successfully");
         };
     }
 
-    private Department createAndSaveDepartment(String name, String description) {
+    private Department createOrGetDepartment(String name, String description) {
+        // Try to find department by name first
+        Optional<Department> existingDept = departmentRepository.findByName(name);
+
+        if (existingDept.isPresent()) {
+            return existingDept.get();
+        }
+
+        // If not found, create new department
         Department department = Department.builder()
                 .name(name)
                 .description(description)
@@ -122,15 +146,36 @@ public class UserSeeder {
         return departmentRepository.save(department);
     }
 
-    private User createUser(String email, String fullName, String rawPassword, UserRole role, User manager, Department department) {
-        return User.builder()
+    private User createOrUpdateUser(String email, String fullName, String rawPassword, UserRole role, User manager, Department department, String profilePicUrl) {
+        // Check if user with this email already exists
+        Optional<User> existingUser = userRepository.findByEmail(email);
+
+        if (existingUser.isPresent()) {
+            // Update existing user
+            User user = existingUser.get();
+            user.setFullName(fullName);
+            // Only update password if it's different (you might want to add more sophisticated password checking)
+            if (!passwordEncoder.matches(rawPassword, user.getPassword())) {
+                user.setPassword(passwordEncoder.encode(rawPassword));
+            }
+            user.setRole(role);
+            user.setManager(manager);
+            user.setDepartment(department);
+            user.setProfilePicUrl(profilePicUrl);
+            return userRepository.save(user);
+        }
+
+        // Create new user if not exists
+        User newUser = User.builder()
                 .email(email)
                 .fullName(fullName)
                 .password(passwordEncoder.encode(rawPassword))
                 .role(role)
                 .manager(manager)
                 .department(department)
-                .profilePicUrl("https://randomuser.me/api/portraits/lego/1.jpg")
+                .profilePicUrl(profilePicUrl)
                 .build();
+
+        return userRepository.save(newUser);
     }
 }
